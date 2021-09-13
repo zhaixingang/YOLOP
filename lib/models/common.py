@@ -138,15 +138,41 @@ class SPP(nn.Module):
         return self.cv2(torch.cat([x] + [m(x) for m in self.m], 1))
 
 
+# class Focus(nn.Module):
+#     # Focus wh information into c-space
+#     # slice concat conv
+#     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+#         super(Focus, self).__init__()
+#         self.conv = Conv(c1 * 4, c2, k, s, p, g, act)
+#
+#     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
+#         return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
+
+
 class Focus(nn.Module):
     # Focus wh information into c-space
-    # slice concat conv
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Focus, self).__init__()
+        super().__init__()
         self.conv = Conv(c1 * 4, c2, k, s, p, g, act)
+        self.contract = Contract(gain=2)
 
     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
-        return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
+        # return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
+        return self.conv(self.contract(x))
+
+
+class Contract(nn.Module):
+    # Contract width-height into channels, i.e. x(1,64,80,80) to x(1,256,40,40)
+    def __init__(self, gain=2):
+        super().__init__()
+        self.gain = gain
+
+    def forward(self, x):
+        b, c, h, w = x.size()  # assert (h / s == 0) and (W / s == 0), 'Indivisible gain'
+        s = self.gain
+        x = x.view(b, c, h // s, s, w // s, s)  # x(1,64,40,2,40,2)
+        x = x.permute(0, 3, 5, 1, 2, 4).contiguous()  # x(1,2,2,64,40,40)
+        return x.view(b, c * s * s, h // s, w // s)  # x(1,256,40,40)
 
 
 class Concat(nn.Module):
@@ -171,11 +197,11 @@ class Detect(nn.Module):
         self.no = nc + 5  # number of outputs per anchor 85
         self.nl = len(anchors)  # number of detection layers 3
         self.na = len(anchors[0]) // 2  # number of anchors 3
-        self.grid = [torch.zeros(1)] * self.nl  # init grid 
+        self.grid = [torch.zeros(1)] * self.nl  # init grid
         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
         self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv  
+        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
 
     def forward(self, x):
         z = []  # inference output
@@ -203,9 +229,33 @@ class Detect(nn.Module):
 
     @staticmethod
     def _make_grid(nx=20, ny=20):
-        
+
         yv, xv = torch.meshgrid([torch.arange(ny), torch.arange(nx)])
         return torch.stack((xv, yv), 2).view((1, 1, ny, nx, 2)).float()
+
+
+# class Detect(nn.Module):
+#     stride = None  # strides computed during build
+#
+#     def __init__(self, nc=13, anchors=(), ch=()):  # detection layer
+#         super(Detect, self).__init__()
+#         self.nc = nc  # number of classes
+#         self.no = nc + 5  # number of outputs per anchor 85
+#         self.nl = len(anchors)  # number of detection layers 3
+#         self.na = len(anchors[0]) // 2  # number of anchors 3
+#         self.grid = [torch.zeros(1)] * self.nl  # init grid
+#         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
+#         self.register_buffer('anchors', a)  # shape(nl,na,2)
+#         self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+#         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+#
+#     def forward(self, x):
+#         z = []  # inference output
+#         for i in range(self.nl):
+#             x[i] = self.m[i](x[i])  # conv
+#             z.append(x[i])
+#         return z
+
 
 
 """class Detections:
