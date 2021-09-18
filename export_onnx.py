@@ -17,6 +17,7 @@ from torch.nn import Upsample
 from lib.utils import check_anchor_order
 from lib.core.evaluate import SegmentationMetric
 from lib.utils.utils import time_synchronized
+from thop import profile
 
 """
 MCnet_SPP = [
@@ -591,6 +592,8 @@ if __name__ == "__main__":
     model.eval()
     output_onnx = 'onnx/yolop_self.onnx'
     inputs = torch.randn(1, 3, 640, 640)
+    macs, params = profile(model, inputs=(inputs, ))
+    print(macs * 2)
     # with torch.no_grad():
     #     output = model(inputs)
     # print(output)
